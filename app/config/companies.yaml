@@ -1,0 +1,124 @@
+# 税理士ミーティング — 対象法人の設定
+#
+# 毎月の月次ミーティングで議論する3法人の財務データを管理する。
+# ファイル命名規則: {prefix}-月次検証-YYYYMM.xlsx or 月次報告-YYYYMM.xlsx
+
+# Notion親ページ設定（税理士議事録の格納先）
+notion:
+  parent_page_id: "38005528-aa05-8136-bddb-e11e4acdf0a3"
+
+# 月次データの格納先
+data:
+  monthly_dir: "../data/monthly"
+  # ファイル命名パターン（法人ごとのprefix + YYYYMM）
+  # esエンターテイメント: 月次報告-YYYYMM.xlsx
+  # エスクリエイト: SC-月次検証-YYYYMM.xlsx
+  # ライフワーク: LW-月次検証-YYYYMM.xlsx
+
+# 対象法人（税理士ミーティングの3社）
+companies:
+  - id: es-entertainment
+    name: esエンターテイメント
+    legal_entity: ㈱esエンターテイメント
+    business_type: 飲食業
+    file_prefix: "月次報告"
+    fiscal_year_start: 7  # 7月決算
+    sheets:
+      bs: 月次BS
+      bs_thousand: BS千円
+      pl: 月次PL
+      pl_trend: PL推移
+      pl_budget: PL予実対比
+      cf: CF推移
+      plan: 収支計画
+    segments:
+      - 恵愛
+      - 村
+      - 弁当
+      - シェア
+      - サウナ
+    key_metrics:
+      - label: 売上高合計
+        sheet: 月次PL
+        description: 全セグメント合計売上
+      - label: 粗利益
+        sheet: 月次PL
+        description: 売上総利益
+      - label: 営業CF
+        sheet: CF推移
+        description: 営業活動CF
+      - label: 現金預金
+        sheet: 月次BS
+        description: 現金及び預金合計
+
+  - id: s-create
+    name: エスクリエイト
+    legal_entity: ㈱エスクリエイト
+    business_type: コンサルティング
+    file_prefix: "SC-月次検証"
+    fiscal_year_start: 7  # 7月決算
+    sheets:
+      bs: 月次BS
+      bs_thousand: BS千円
+      pl: 月次PL
+      forecast: 決算予測
+      pl_trend: PL推移
+      pl_budget: PL予実対比
+      cf: CF推移
+      plan: 収支計画
+    segments: []  # 単一売上
+    key_metrics:
+      - label: 売上高
+        sheet: 月次PL
+        description: コンサルティング売上
+      - label: 販売管理費
+        sheet: 月次PL
+        description: 主に人件費
+      - label: 現金預金
+        sheet: 月次BS
+        description: 現金及び預金合計
+
+  - id: life-work
+    name: ライフワーク
+    legal_entity: ㈱esライフワーク
+    business_type: 就労継続支援A型/B型
+    file_prefix: "LW-月次検証"
+    fiscal_year_start: 4  # 4月決算
+    sheets:
+      bs: 月次BS
+      bs_thousand: BS千円
+      pl: 月次PL
+      pl_trend: PL推移
+      pl_budget: PL予実対比
+      cf: CF推移
+      plan: 収支計画
+      forecast: Sheet1  # 決算着地見通し
+    segments:
+      - 国保連Ａ型
+      - 国保連Ｂ型
+      - 処遇改善手当
+      - 特開金
+      - 生産活動
+    key_metrics:
+      - label: 売上高合計
+        sheet: 月次PL
+        description: 全区分合計（国保連+特開金+生産活動）
+      - label: 人件費
+        sheet: PL推移
+        description: 就労支援は人件費比率が高い
+      - label: 営業CF
+        sheet: CF推移
+        description: 営業活動CF
+      - label: 現金預金
+        sheet: 月次BS
+        description: 現金及び預金合計
+
+# 名前マッピング（文字起こし補正用）
+name_mapping:
+  池田: 池田（税理士）
+  いけだ: 池田（税理士）
+  イケダ: 池田（税理士）
+  先生: 池田（税理士）
+  椎名: 慎也（経営者）
+  しいな: 慎也（経営者）
+  シイナ: 慎也（経営者）

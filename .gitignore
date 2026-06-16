@@ -1,0 +1,11 @@
+# Notion tokens
+app/config/.notion_token
+app/config/.notion_token_es_group
+
+# Data files
+data/monthly/*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tax-dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "streamlit", "run", "/Users/suzukishinya/Desktop/Claude Code/business/tax-meeting/app/dashboard.py", "--server.headless", "true", "--server.port", "8501"],
+      "port": 8501,
+      "cwd": "/Users/suzukishinya/Desktop/Claude Code/business/tax-meeting"
+    }
+  ]
+}
