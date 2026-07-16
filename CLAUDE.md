@@ -38,7 +38,9 @@ Phase 4: 財務データ × 議事録 → AIフィードバック生成 → Noti
 
 ### ダッシュボード
 - **アプリ:** `app/dashboard.py`（Streamlit + Plotly）
-- **起動:** `cd app && streamlit run dashboard.py`
+- **公開URL（Streamlit Cloud）:** https://suuchin0410-ops-es-group-meeting-appdashboard-6ichlx.streamlit.app/
+  - mainブランチへのpushで自動更新。スリープ時は「Yes, get this app back up!」で起動（1〜2分）
+- **ローカル起動:** `cd app && streamlit run dashboard.py`
 - 3社のBS/PL/CF推移、セグメント別売上、予実対比、BS詳細ドリルダウンを可視化
 
 ### Notion連携（2つのワークスペース）
