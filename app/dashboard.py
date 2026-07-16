@@ -605,12 +605,38 @@ def _settlement_month_label(fy_start):
     return f"{m}月"
 
 
-def _drop_settlement_month(months, data_dict, fy_start):
-    """決算月が末尾にあれば除外する（決算月のデータは未確定のため）。"""
+def _fiscal_index(label, fy_start):
+    """月ラベルを期首からの経過月インデックスに変換する（'期首残'等の非月ラベルはNone）。"""
+    try:
+        m = int(str(label).replace("月", ""))
+    except ValueError:
+        return None
+    return (m - fy_start) % 12
+
+
+def _drop_settlement_month(months, data_dict, fy_start, selected_month=None):
+    """表示対象外の月を除外する。
+
+    - selected_month（YYYYMM）より後の月は除外する
+      （翌月分が入力途中のExcel列に混入するのを防ぐ）
+    - 決算月が末尾にある場合、それが対象月そのものなら実績確定とみなして残し、
+      対象月より前の時点では未確定データとして除外する
+    """
     if not months:
         return months, data_dict
+    sel_label = None
+    if selected_month:
+        sel_label = f"{int(str(selected_month)[4:6])}月"
+        sel_idx = _fiscal_index(sel_label, fy_start)
+        keep = []
+        for i, m in enumerate(months):
+            fi = _fiscal_index(m, fy_start)
+            if fi is None or fi <= sel_idx:
+                keep.append(i)
+        months = [months[i] for i in keep]
+        data_dict = {k: [v[i] for i in keep if i < len(v)] for k, v in data_dict.items()}
     label = _settlement_month_label(fy_start)
-    if months[-1] == label:
+    if months and months[-1] == label and sel_label != label:
         trimmed_months = months[:-1]
         trimmed = {k: v[:-1] for k, v in data_dict.items()}
         return trimmed_months, trimmed
@@ -1136,7 +1162,7 @@ def main():
 
             fy_s = company.get("fiscal_year_start", 7)
             months_pl, pl_data = extract_monthly_pl(pl_df)
-            months_pl, pl_data = _drop_settlement_month(months_pl, pl_data, fy_s)
+            months_pl, pl_data = _drop_settlement_month(months_pl, pl_data, fy_s, selected_month)
 
             revenue = pl_data.get("売上高", [])
             gross = pl_data.get("粗利", [])
@@ -1150,7 +1176,7 @@ def main():
                 _, pl_det_s = extract_pl_detail(trend_df_s)
                 if pl_det_s:
                     _, pl_det_s = _trim_zero_tail(months_pl, pl_det_s)
-                    _, pl_det_s = _drop_settlement_month(months_pl, pl_det_s, fy_s)
+                    _, pl_det_s = _drop_settlement_month(months_pl, pl_det_s, fy_s, selected_month)
                     ord_vals_s = pl_det_s.get("経常利益", [])
                     ord_total_sum = sum(ord_vals_s)
             except Exception:
@@ -1169,7 +1195,7 @@ def main():
             kpi_card("粗利率", f"{gross_rate:.1f}%", "", color=color)
 
             bs_months_kpi, bs_data = extract_bs_trend(bs_df, fy_s)
-            bs_months_kpi, bs_data = _drop_settlement_month(bs_months_kpi, bs_data, fy_s)
+            bs_months_kpi, bs_data = _drop_settlement_month(bs_months_kpi, bs_data, fy_s, selected_month)
             cash_vals = bs_data.get("現金及び預金合計", [])
             if cash_vals:
                 latest_cash = [v for v in cash_vals if v != 0]
@@ -1222,11 +1248,11 @@ def main():
             trend_df = read_pl_trend(str(fpath), cid)
             months_t, trend_data = extract_pl_trend_data(trend_df)
             months_t, trend_data = _trim_zero_tail(months_t, trend_data)
-            months_t, trend_data = _drop_settlement_month(months_t, trend_data, fy_start)
+            months_t, trend_data = _drop_settlement_month(months_t, trend_data, fy_start, selected_month)
             _, pl_det = extract_pl_detail(trend_df)
             if pl_det:
                 _, pl_det = _trim_zero_tail(months_t, pl_det)
-                _, pl_det = _drop_settlement_month(months_t, pl_det, fy_start)
+                _, pl_det = _drop_settlement_month(months_t, pl_det, fy_start, selected_month)
                 for dk in ["営業利益", "経常利益", "営業外収益", "営業外費用"]:
                     if dk in pl_det:
                         trend_data[dk] = pl_det[dk][:len(months_t)]
@@ -1240,7 +1266,7 @@ def main():
             cf_df = read_cf(str(fpath), cid)
             cf_months, cf_data = extract_cf_data(cf_df)
             cf_months, cf_data = _trim_zero_tail(cf_months, cf_data)
-            cf_months, cf_data = _drop_settlement_month(cf_months, cf_data, fy_start)
+            cf_months, cf_data = _drop_settlement_month(cf_months, cf_data, fy_start, selected_month)
             cal = fiscal_months_to_calendar(cf_months, fy_start, selected_month)
             all_cf[cid] = {"months": cal, "data": cf_data, "name": company["name"]}
         except Exception:
@@ -1852,7 +1878,7 @@ def main():
             bs_months, bs_data = extract_bs_trend(bs_raw, fy_start)
             if bs_months and bs_data:
                 bs_months, bs_data = _trim_zero_tail(bs_months, bs_data)
-                bs_months, bs_data = _drop_settlement_month(bs_months, bs_data, fy_start)
+                bs_months, bs_data = _drop_settlement_month(bs_months, bs_data, fy_start, selected_month)
                 skip = 0
                 if bs_months and "期首" in bs_months[0]:
                     skip = 1
