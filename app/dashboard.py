@@ -7,8 +7,9 @@ import streamlit as st
 import yaml
 from pathlib import Path
 
-CONFIG_DIR = Path(__file__).parent / "config"
-DATA_DIR = Path(__file__).parent.parent / "data" / "monthly"
+APP_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = APP_DIR / "config"
+DATA_DIR = APP_DIR.parent / "data" / "monthly"
 COMPANIES_FILE = CONFIG_DIR / "companies.yaml"
 
 COMPANY_COLORS = {
