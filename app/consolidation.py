@@ -31,6 +31,7 @@ import yaml
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = APP_DIR / "config"
 DATA_DIR = APP_DIR.parent / "data" / "monthly"
+HISTORY_DIR = APP_DIR.parent / "data" / "history"
 COMPANIES_FILE = CONFIG_DIR / "companies.yaml"
 INTERCOMPANY_FILE = CONFIG_DIR / "intercompany.yaml"
 
@@ -158,6 +159,81 @@ def monthly_segments(company: dict, file_yyyymm: str) -> dict:
 
 
 # ============================================================
+# 補助データソース（過年度の月次実績）
+# ============================================================
+
+def load_history_manifest():
+    """data/history/manifest.yaml を読む。無ければ空。"""
+    mf = HISTORY_DIR / "manifest.yaml"
+    if not mf.exists():
+        return []
+    with open(mf, "r") as f:
+        return (yaml.safe_load(f) or {}).get("sources", []) or []
+
+
+def _add_months(yyyymm: str, n: int) -> str:
+    y, m = int(yyyymm[:4]), int(yyyymm[4:])
+    total = (y * 12 + m - 1) + n
+    return f"{total // 12}{total % 12 + 1:02d}"
+
+
+def supplementary_pl(company_id: str) -> dict:
+    """過年度の月次PLを暦月ベースで返す（標準様式外のファイルに対応）。
+
+    月次Excelは1事業年度分しか持たないため、決算期の異なる会社を暦月で
+    12ヶ月連結するには過年度の実績が要る。manifest.yaml で様式を宣言する。
+    """
+    out = {}
+    for src in load_history_manifest():
+        if src.get("company") != company_id:
+            continue
+        path = HISTORY_DIR / src["file"]
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_excel(path, sheet_name=src["sheet"], header=None)
+        except Exception:
+            continue
+
+        scale = 0.001 if src.get("unit") == "円" else 1.0
+        first_col = int(src.get("first_col", 2))
+        count = int(src.get("month_count", 12))
+        first_month = str(src["first_month"])
+
+        # ラベル → 行 の対応を作る（行番号ではなくラベルで拾う）
+        label_to_key = {v: k for k, v in src.get("rows", {}).items()}
+        label_cols = src.get("label_cols", [0, 1])
+        found = {}
+        for _, r in df.iterrows():
+            cells = r.tolist()
+            for lc in label_cols:
+                if lc >= len(cells):
+                    continue
+                label = str(cells[lc]).strip()
+                key = label_to_key.get(label)
+                if key and key not in found:
+                    found[key] = cells
+                    break
+
+        for i in range(count):
+            ym = _add_months(first_month, i)
+            row = {}
+            for key, cells in found.items():
+                idx = first_col + i
+                v = cells[idx] if idx < len(cells) else None
+                row[key] = (float(v) * scale) if isinstance(v, (int, float)) and not pd.isna(v) else 0.0
+            if any(row.get(k) for k in ("売上高", "販管費")):
+                out[ym] = {
+                    "売上高": row.get("売上高", 0.0),
+                    "売上原価": row.get("売上原価", 0.0),
+                    "粗利益": row.get("粗利益", 0.0),
+                    "販管費": row.get("販管費", 0.0),
+                    "営業利益": row.get("営業利益", 0.0),
+                }
+    return out
+
+
+# ============================================================
 # 内部取引の消去
 # ============================================================
 
@@ -216,8 +292,11 @@ def consolidate(file_yyyymm: str, months: list = None) -> dict:
     by_company = {}
     for c in companies:
         pl = monthly_pl(c, file_yyyymm)
-        if pl:
-            by_company[c["id"]] = pl
+        hist = supplementary_pl(c["id"])
+        # 月次Excel（当年度）を優先し、足りない過去月を補助ソースで埋める
+        merged = {**hist, **pl}
+        if merged:
+            by_company[c["id"]] = merged
 
     all_months = sorted({ym for pl in by_company.values() for ym in pl})
     if months:
