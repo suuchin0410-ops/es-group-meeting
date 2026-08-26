@@ -141,6 +141,35 @@ def monthly_pl(company: dict, file_yyyymm: str) -> dict:
     return out
 
 
+def available_file_months(company: dict) -> list:
+    """その会社の月次Excelが存在する対象月(YYYYMM)を昇順で返す。"""
+    import re
+    prefix = company["file_prefix"]
+    out = []
+    for path in DATA_DIR.glob(f"{prefix}-*.xlsx"):
+        m = re.search(r"(\d{6})", path.name)
+        if m:
+            out.append(m.group(1))
+    return sorted(set(out))
+
+
+def all_monthly_pl(company: dict, upto_yyyymm: str) -> dict:
+    """利用可能な月次Excelを全て併合して暦月PLを返す。
+
+    月次Excelは1事業年度分しか持たないため、1ファイルだけを見ると
+    連結できる期間が短くなる（例: 202607のファイルはエンタなら7月の1ヶ月分のみ）。
+    古いファイルから順に併合し、新しいファイルで上書きすることで、
+    修正が入った月は最新版が勝ちつつ、過去の月も拾える。
+    """
+    merged = {}
+    for ym in available_file_months(company):
+        if ym > upto_yyyymm:
+            continue
+        merged.update(monthly_pl(company, ym))
+    # 対象月より後は落とす（未入力月の混入防止）
+    return {k: v for k, v in merged.items() if k <= upto_yyyymm}
+
+
 def monthly_segments(company: dict, file_yyyymm: str) -> dict:
     """セグメント別売上を暦月ベースで返す。 {YYYYMM: {セグメント名: 金額}}"""
     prefix = company["file_prefix"]
@@ -291,9 +320,9 @@ def consolidate(file_yyyymm: str, months: list = None) -> dict:
 
     by_company = {}
     for c in companies:
-        pl = monthly_pl(c, file_yyyymm)
-        hist = supplementary_pl(c["id"])
-        # 月次Excel（当年度）を優先し、足りない過去月を補助ソースで埋める
+        pl = all_monthly_pl(c, file_yyyymm)
+        hist = {k: v for k, v in supplementary_pl(c["id"]).items() if k <= file_yyyymm}
+        # 月次Excelを優先し、足りない過去月を補助ソースで埋める
         merged = {**hist, **pl}
         if merged:
             by_company[c["id"]] = merged

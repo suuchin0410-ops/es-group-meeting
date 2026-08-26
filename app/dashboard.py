@@ -602,6 +602,27 @@ def _trim_zero_tail(months, data_dict):
     return trimmed_months, trimmed
 
 
+def _cap_at_selected(months, data_dict, fy_start, selected_month):
+    """選択月より後の列を切り捨てる。
+
+    月次Excelは12ヶ月分の列を持つが、未入力の翌月列は「空欄 - 当月残高」を
+    差分として拾い、残高そのものが符号反転して現れることがある
+    （例: 投資活動CF に固定資産合計、財務活動CF に長期借入金残高）。
+    これはゼロではないため _trim_zero_tail では落ちない。
+    実績のある月数は選択月から一意に決まるので、そこで打ち切る。
+    """
+    if not months or not selected_month:
+        return months, data_dict
+    try:
+        sel_m = int(str(selected_month)[4:])
+    except (ValueError, TypeError):
+        return months, data_dict
+    keep = (sel_m - fy_start) % 12 + 1
+    if keep >= len(months):
+        return months, data_dict
+    return months[:keep], {k: v[:keep] for k, v in data_dict.items()}
+
+
 def _settlement_month_label(fy_start):
     """決算月のラベルを返す（例: fy_start=7 → '6月'）。"""
     m = fy_start - 1 if fy_start > 1 else 12
@@ -1338,6 +1359,7 @@ def main():
                 trend_df_s = read_pl_trend(str(fpath), cid)
                 _, pl_det_s = extract_pl_detail(trend_df_s)
                 if pl_det_s:
+                    _, pl_det_s = _cap_at_selected(months_pl, pl_det_s, fy_s, selected_month)
                     _, pl_det_s = _trim_zero_tail(months_pl, pl_det_s)
                     _, pl_det_s = _drop_settlement_month(months_pl, pl_det_s, fy_s, selected_month)
                     ord_vals_s = pl_det_s.get("経常利益", [])
@@ -1415,10 +1437,12 @@ def main():
         try:
             trend_df = read_pl_trend(str(fpath), cid)
             months_t, trend_data = extract_pl_trend_data(trend_df)
+            months_t, trend_data = _cap_at_selected(months_t, trend_data, fy_start, selected_month)
             months_t, trend_data = _trim_zero_tail(months_t, trend_data)
             months_t, trend_data = _drop_settlement_month(months_t, trend_data, fy_start, selected_month)
             _, pl_det = extract_pl_detail(trend_df)
             if pl_det:
+                _, pl_det = _cap_at_selected(months_t, pl_det, fy_start, selected_month)
                 _, pl_det = _trim_zero_tail(months_t, pl_det)
                 _, pl_det = _drop_settlement_month(months_t, pl_det, fy_start, selected_month)
                 for dk in ["営業利益", "経常利益", "営業外収益", "営業外費用"]:
@@ -1433,6 +1457,7 @@ def main():
         try:
             cf_df = read_cf(str(fpath), cid)
             cf_months, cf_data = extract_cf_data(cf_df)
+            cf_months, cf_data = _cap_at_selected(cf_months, cf_data, fy_start, selected_month)
             cf_months, cf_data = _trim_zero_tail(cf_months, cf_data)
             cf_months, cf_data = _drop_settlement_month(cf_months, cf_data, fy_start, selected_month)
             cal = fiscal_months_to_calendar(cf_months, fy_start, selected_month)
@@ -2045,6 +2070,7 @@ def main():
             bs_raw = read_bs(str(cd["file"]), cid)
             bs_months, bs_data = extract_bs_trend(bs_raw, fy_start)
             if bs_months and bs_data:
+                bs_months, bs_data = _cap_at_selected(bs_months, bs_data, fy_start, selected_month)
                 bs_months, bs_data = _trim_zero_tail(bs_months, bs_data)
                 bs_months, bs_data = _drop_settlement_month(bs_months, bs_data, fy_start, selected_month)
                 skip = 0
