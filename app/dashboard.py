@@ -1159,10 +1159,10 @@ def render_consolidation(selected_month: str, companies: list):
         st.error(f"連結計算に失敗しました: {e}")
         return
 
-    comp_months = consolidation.complete_months(result)
+    periods = consolidation.group_by_fiscal_period(result)
     st.info(consolidation.coverage_note(result))
 
-    if not comp_months:
+    if not periods:
         st.warning(
             "3社すべてのデータが揃う暦月がないため、連結値を算出できません。"
             "決算期の違い（エンタ・SC=6月決算 / LW=3月決算）により、"
@@ -1170,12 +1170,37 @@ def render_consolidation(selected_month: str, companies: list):
         )
         return
 
-    simple = consolidation.period_total(result["simple_sum"], comp_months)
-    cons = consolidation.period_total(result["consolidated"], comp_months)
-    elim_total = simple["売上高"] - cons["売上高"]
+    st.caption(
+        "期の区切りはエンタ・エスクリエイトの期首（7月）に合わせている。"
+        "ライフワークは3月決算のため、LWの数字は自社の期をまたいで暦月で割り当てられる。"
+    )
 
-    label = f"{comp_months[0][:4]}年{int(comp_months[0][4:])}月 〜 {comp_months[-1][:4]}年{int(comp_months[-1][4:])}月"
-    st.markdown(f"**集計期間: {label}（{len(comp_months)}ヶ月）**")
+    # --- 期をまたいだ比較サマリー ---
+    st.markdown("**決算期ごとのサマリー**")
+    rows = []
+    for p in periods:
+        c, sm = p["consolidated"], p["simple_sum"]
+        rows.append({
+            "決算期": p["label"],
+            "期間": p["range"],
+            "経過": f"{p['elapsed']}ヶ月" + ("（進行中）" if p["elapsed"] < 12 else ""),
+            "単純合算 売上": f"{sm['売上高']:,.0f}",
+            "内部取引 消去": f"-{p['elimination']:,.0f}" if p["elimination"] else "0",
+            "連結売上（真水）": f"{c['売上高']:,.0f}",
+            "連結 営業利益": f"{c['営業利益']:,.0f}",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # --- 期を選んで詳細 ---
+    labels = [f"{p['label']}（{p['range']}）" for p in periods]
+    picked = st.radio("表示する決算期", labels, horizontal=True, key="consol_period")
+    p = periods[labels.index(picked)]
+    comp_months = p["months"]
+    simple, cons = p["simple_sum"], p["consolidated"]
+    elim_total = p["elimination"]
+
+    if p["elapsed"] < 12:
+        st.caption(f"※ {p['label']} は進行中です（{p['elapsed']}ヶ月経過）。通期の数字ではありません。")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1192,28 +1217,27 @@ def render_consolidation(selected_month: str, companies: list):
     cfg = consolidation.load_intercompany()
     name_by_id = {c["id"]: c["name"] for c in companies}
 
-    rows = []
+    tx_rows = []
     for tx in cfg.get("transactions", []):
         amounts = tx.get("amounts") or {}
         amt = sum(float(v) for k, v in amounts.items() if str(k) in comp_months)
         badge, _ = CONSOL_STATUS_BADGE.get(tx.get("status", "unknown"), ("未確認", "#b23a2e"))
-        rows.append({
+        tx_rows.append({
             "内部取引": tx.get("name", tx.get("id")),
             "売り手": name_by_id.get(tx.get("seller"), tx.get("seller") or "—"),
             "買い手": name_by_id.get(tx.get("buyer"), tx.get("buyer") or "—"),
             "期間中の消去額（千円）": f"{amt:,.0f}" if tx.get("status") != "unknown" else "—",
             "状態": badge,
         })
-    if rows:
+    if tx_rows:
         st.markdown("**内部取引の消去明細**")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(tx_rows), use_container_width=True, hide_index=True)
 
-    # --- 未確認の警告 ---
-    unknown_txs = [t for t in cfg.get("transactions", [])
-                   if t.get("status") == "unknown" and t.get("active", True)]
-    if unknown_txs:
+    if p["unknown"]:
+        unknown_txs = [t for t in cfg.get("transactions", [])
+                       if t.get("name", t.get("id")) in p["unknown"]]
         st.warning(
-            f"**金額が未確認の内部取引が {len(unknown_txs)} 件あります。"
+            f"**金額が未確認の内部取引が {len(p['unknown'])} 件あります。"
             "消去されていないため、上の「連結売上（真水）」はまだ実態より大きい可能性があります。**"
         )
         for t in unknown_txs:
@@ -1230,16 +1254,16 @@ def render_consolidation(selected_month: str, companies: list):
         )
 
     # --- 月次推移 ---
-    st.markdown("**月次推移：単純合算 vs 連結（真水）**")
-    labels = [f"{int(m[4:])}月" for m in comp_months]
+    st.markdown(f"**月次推移：単純合算 vs 連結（真水）— {p['label']}**")
+    labels_m = [f"{int(m[4:])}月" for m in comp_months]
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=labels, y=[result["simple_sum"][m]["売上高"] for m in comp_months],
+        x=labels_m, y=[result["simple_sum"][m]["売上高"] for m in comp_months],
         name="単純合算", marker_color="#c3cbd6",
         hovertemplate="<b>%{x}</b><br>単純合算: %{y:,.0f} 千円<extra></extra>",
     ))
     fig.add_trace(go.Bar(
-        x=labels, y=[result["consolidated"][m]["売上高"] for m in comp_months],
+        x=labels_m, y=[result["consolidated"][m]["売上高"] for m in comp_months],
         name="連結（真水）", marker_color="#1e3a5f",
         hovertemplate="<b>%{x}</b><br>連結: %{y:,.0f} 千円<extra></extra>",
     ))
@@ -1250,13 +1274,12 @@ def render_consolidation(selected_month: str, companies: list):
     st.plotly_chart(fig, use_container_width=True)
 
     # --- 法人別の内訳 ---
-    st.markdown("**法人別の内訳（期間合計）**")
+    st.markdown(f"**法人別の内訳（{p['label']} 合計）**")
     brk = []
     for c in companies:
-        pl = result["by_company"].get(c["id"])
-        if not pl:
+        t = p["by_company"].get(c["id"])
+        if not t:
             continue
-        t = consolidation.period_total(pl, comp_months)
         brk.append({
             "法人": c["name"],
             "売上高": f"{t['売上高']:,.0f}",

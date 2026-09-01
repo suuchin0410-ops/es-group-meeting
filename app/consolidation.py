@@ -37,6 +37,10 @@ INTERCOMPANY_FILE = CONFIG_DIR / "intercompany.yaml"
 
 PL_SECTIONS = ("売上高", "売上原価", "粗利益", "販売管理費", "営業利益", "経常利益")
 
+# 連結の「期」の起点。エンタ・エスクリエイトの期首（7月）に合わせる。
+# ライフワークは3月決算のため、LWの数字は自社の期をまたいで暦月で割り当てられる。
+GROUP_FY_START = 7
+
 
 # ============================================================
 # 設定の読み込み
@@ -402,3 +406,89 @@ def coverage_note(result: dict) -> str:
     if partial:
         msg += f" ／ 一部の会社のみ: {len(partial)}ヶ月（連結値には使えません）"
     return msg
+
+
+# ============================================================
+# 決算期ごとの集計
+# ============================================================
+
+def fiscal_period_end(yyyymm: str, fy_start: int = GROUP_FY_START) -> str:
+    """その暦月が属する期の期末(YYYYMM)を返す。"""
+    y, m = int(yyyymm[:4]), int(yyyymm[4:])
+    end_month = fy_start - 1 if fy_start > 1 else 12
+    if fy_start == 1:
+        ey = y
+    elif m >= fy_start:
+        ey = y + 1
+    else:
+        ey = y
+    return f"{ey}{end_month:02d}"
+
+
+def period_label(period_end: str) -> str:
+    """期末(YYYYMM)を「令和N年M月期」に変換する。"""
+    y, m = int(period_end[:4]), int(period_end[4:])
+    reiwa = y - 2018
+    return f"令和{reiwa}年{m}月期" if reiwa > 0 else f"{y}年{m}月期"
+
+
+def period_range_label(period_end: str, fy_start: int = GROUP_FY_START) -> str:
+    """「2025年7月〜2026年6月」形式の期間表記を返す。"""
+    ey, em = int(period_end[:4]), int(period_end[4:])
+    sm = fy_start
+    sy = ey - 1 if fy_start > 1 else ey
+    return f"{sy}年{sm}月〜{ey}年{em}月"
+
+
+def group_by_fiscal_period(result: dict, fy_start: int = GROUP_FY_START) -> list:
+    """連結結果を決算期ごとにまとめる。
+
+    エンタ・エスクリエイトは6月決算（期首7月）のため、7月から新しい期に入る。
+    連結もその区切りで見られるように、暦月を期ごとに束ねる。
+
+    戻り値: 期末の新しい順に
+      [{
+        "period_end": "202606",
+        "label": "令和8年6月期",
+        "range": "2025年7月〜2026年6月",
+        "months": [...],            # 全社データが揃う暦月のみ
+        "all_months": [...],        # データがある暦月（不完全な月を含む）
+        "elapsed": 12,              # 揃っている月数
+        "simple_sum": {...},
+        "consolidated": {...},
+        "elimination": 消去額,
+        "unknown": [未確認の取引名],
+        "by_company": {cid: {...}},
+      }, ...]
+    """
+    buckets = {}
+    for ym in result["months"]:
+        buckets.setdefault(fiscal_period_end(ym, fy_start), []).append(ym)
+
+    out = []
+    for pe in sorted(buckets, reverse=True):
+        all_months = sorted(buckets[pe])
+        months = [m for m in all_months if result["coverage"][m]["complete"]]
+        if not months:
+            continue
+        elim = sum(result["elimination"][m]["amount"] for m in months)
+        unknown = sorted({n for m in months for n in result["unknown"][m]})
+        by_co = {}
+        for cid, pl in result["by_company"].items():
+            t = period_total(pl, months)
+            if any(t.values()):
+                by_co[cid] = t
+        out.append({
+            "period_end": pe,
+            "label": period_label(pe),
+            "range": period_range_label(pe, fy_start),
+            "months": months,
+            "all_months": all_months,
+            "elapsed": len(months),
+            "simple_sum": period_total(result["simple_sum"], months),
+            "consolidated": period_total(result["consolidated"], months),
+            "elimination": elim,
+            "unknown": unknown,
+            "by_company": by_co,
+        })
+    return out
