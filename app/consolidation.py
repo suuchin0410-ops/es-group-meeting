@@ -505,3 +505,31 @@ def group_by_fiscal_period(result: dict, fy_start: int = GROUP_FY_START) -> list
             "by_company": by_co,
         })
     return out
+
+
+def company_by_fiscal_period(result: dict, company_id: str, fy_start: int) -> list:
+    """1社を、その会社自身の決算期で束ねて返す。
+
+    グループの連結はエンタ・エスクリエイトの期首（7月）で区切るため、
+    3月決算のライフワークは自社の期をまたいで割り当てられる。
+    LWの決算書と突き合わせたい場合に、自社の期（4月〜3月）で見るための関数。
+    """
+    pl = result["by_company"].get(company_id, {})
+    if not pl:
+        return []
+    buckets = {}
+    for ym in pl:
+        buckets.setdefault(fiscal_period_end(ym, fy_start), []).append(ym)
+
+    out = []
+    for pe in sorted(buckets, reverse=True):
+        months = sorted(buckets[pe])
+        out.append({
+            "period_end": pe,
+            "label": period_label(pe),
+            "range": period_range_label(pe, fy_start),
+            "months": months,
+            "elapsed": len(months),
+            "total": period_total(pl, months),
+        })
+    return out

@@ -602,6 +602,22 @@ def _trim_zero_tail(months, data_dict):
     return trimmed_months, trimmed
 
 
+def _file_month_for_period(company, period, available_months, fallback):
+    """選択中の決算期の期末に最も近い月次Excelの対象月を返す。
+
+    BSは残高（時点）なので、過去の期を見るときはその期をカバーする
+    ファイルを読む必要がある。最新ファイルだけを見ていると、
+    どの期を選んでも直近月の残高が出てしまう。
+    """
+    if not period or not period.get("months"):
+        return fallback
+    period_end = period["months"][-1]
+    prefix = company["file_prefix"]
+    cands = [m for m in available_months
+             if m <= period_end and (DATA_DIR / f"{prefix}-{m}.xlsx").exists()]
+    return max(cands) if cands else fallback
+
+
 def _cap_at_selected(months, data_dict, fy_start, selected_month):
     """選択月より後の列を切り捨てる。
 
@@ -1142,8 +1158,8 @@ CONSOL_STATUS_BADGE = {
 }
 
 
-def render_consolidation(selected_month: str, companies: list):
-    """グループ内部取引を消去した連結PLを表示する。
+def render_consolidation(result: dict, periods: list, period: dict, companies: list):
+    """内部取引を消去した連結PLを、選択中の決算期について表示する。
 
     各社の月次Excelには取引相手先の情報が無いため、消去額は
     config/intercompany.yaml の宣言に依存する。金額未確認の取引は
@@ -1153,33 +1169,18 @@ def render_consolidation(selected_month: str, companies: list):
     st.subheader("🔗 連結決算（内部取引消去後）")
     st.caption(
         "グループ外からの「真水の売上」を見るためのビュー。"
-        "決算期が揃っていないため暦月ベースで合算している。"
+        "内部取引の消去は売上と費用を同額落とすため営業利益は変わらない。"
+        "変わるのは売上・費用の総額（グループの規模の見え方）。"
     )
 
-    try:
-        result = consolidation.consolidate(selected_month)
-    except Exception as e:
-        st.error(f"連結計算に失敗しました: {e}")
-        return
-
-    periods = consolidation.group_by_fiscal_period(result)
-    st.info(consolidation.coverage_note(result))
-
-    if not periods:
+    if not period:
         st.warning(
             "3社すべてのデータが揃う暦月がないため、連結値を算出できません。"
-            "決算期の違い（エンタ・SC=6月決算 / LW=3月決算）により、"
-            "1つの月次Excelがカバーする暦月が会社ごとにずれます。"
         )
         return
 
-    st.caption(
-        "期の区切りはエンタ・エスクリエイトの期首（7月）に合わせている。"
-        "ライフワークは3月決算のため、LWの数字は自社の期をまたいで暦月で割り当てられる。"
-    )
-
-    # --- 期をまたいだ比較サマリー ---
-    st.markdown("**決算期ごとのサマリー**")
+    # --- 期をまたいだ比較 ---
+    st.markdown("**決算期ごとの推移**")
     rows = []
     for p in periods:
         c, sm = p["consolidated"], p["simple_sum"]
@@ -1191,19 +1192,16 @@ def render_consolidation(selected_month: str, companies: list):
             "内部取引 消去": f"-{p['elimination']:,.0f}" if p["elimination"] else "0",
             "連結売上（真水）": f"{c['売上高']:,.0f}",
             "連結 営業利益": f"{c['営業利益']:,.0f}",
+            "連結 経常利益": f"{c['経常利益']:,.0f}",
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                 key="consol_periods_table")
 
-    # --- 期を選んで詳細 ---
-    labels = [f"{p['label']}（{p['range']}）" for p in periods]
-    picked = st.radio("表示する決算期", labels, horizontal=True, key="consol_period")
-    p = periods[labels.index(picked)]
-    comp_months = p["months"]
-    simple, cons = p["simple_sum"], p["consolidated"]
-    elim_total = p["elimination"]
+    comp_months = period["months"]
+    simple, cons = period["simple_sum"], period["consolidated"]
+    elim_total = period["elimination"]
 
-    if p["elapsed"] < 12:
-        st.caption(f"※ {p['label']} は進行中です（{p['elapsed']}ヶ月経過）。通期の数字ではありません。")
+    st.markdown(f"#### {period['label']}（{period['range']}）")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1213,8 +1211,8 @@ def render_consolidation(selected_month: str, companies: list):
     with c3:
         kpi_card("連結売上（真水）", cons["売上高"], "千円", color="#1e3a5f")
     with c4:
-        kpi_card("連結 営業利益", cons["営業利益"], "千円",
-                 color="#1c6650" if cons["営業利益"] >= 0 else "#b23a2e")
+        kpi_card("連結 経常利益", cons["経常利益"], "千円",
+                 color="#1c6650" if cons["経常利益"] >= 0 else "#b23a2e")
 
     # --- 内部取引の一覧 ---
     cfg = consolidation.load_intercompany()
@@ -1234,13 +1232,14 @@ def render_consolidation(selected_month: str, companies: list):
         })
     if tx_rows:
         st.markdown("**内部取引の消去明細**")
-        st.dataframe(pd.DataFrame(tx_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(tx_rows), use_container_width=True, hide_index=True,
+                     key="consol_tx_table")
 
-    if p["unknown"]:
+    if period["unknown"]:
         unknown_txs = [t for t in cfg.get("transactions", [])
-                       if t.get("name", t.get("id")) in p["unknown"]]
+                       if t.get("name", t.get("id")) in period["unknown"]]
         st.warning(
-            f"**金額が未確認の内部取引が {len(p['unknown'])} 件あります。"
+            f"**金額が未確認の内部取引が {len(period['unknown'])} 件あります。"
             "消去されていないため、上の「連結売上（真水）」はまだ実態より大きい可能性があります。**"
         )
         for t in unknown_txs:
@@ -1257,7 +1256,7 @@ def render_consolidation(selected_month: str, companies: list):
         )
 
     # --- 月次推移 ---
-    st.markdown(f"**月次推移：単純合算 vs 連結（真水）— {p['label']}**")
+    st.markdown("**月次推移：単純合算 vs 連結（真水）**")
     labels_m = [f"{int(m[4:])}月" for m in comp_months]
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1274,13 +1273,13 @@ def render_consolidation(selected_month: str, companies: list):
         barmode="group", height=320, margin=dict(l=10, r=10, t=30, b=10),
         yaxis_title="千円", legend=dict(orientation="h", y=1.12, x=0),
     )
-    st.plotly_chart(fig, use_container_width=True, key="chart_fig_1273")
+    st.plotly_chart(fig, use_container_width=True, key="consol_monthly_chart")
 
     # --- 法人別の内訳 ---
-    st.markdown(f"**法人別の内訳（{p['label']} 合計）**")
+    st.markdown("**法人別の内訳**")
     brk = []
     for c in companies:
-        t = p["by_company"].get(c["id"])
+        t = period["by_company"].get(c["id"])
         if not t:
             continue
         brk.append({
@@ -1289,27 +1288,112 @@ def render_consolidation(selected_month: str, companies: list):
             "粗利益": f"{t['粗利益']:,.0f}",
             "販管費": f"{t['販管費']:,.0f}",
             "営業利益": f"{t['営業利益']:,.0f}",
+            "経常利益": f"{t['経常利益']:,.0f}",
         })
     brk.append({
         "法人": "単純合算", "売上高": f"{simple['売上高']:,.0f}",
         "粗利益": f"{simple['粗利益']:,.0f}", "販管費": f"{simple['販管費']:,.0f}",
-        "営業利益": f"{simple['営業利益']:,.0f}",
+        "営業利益": f"{simple['営業利益']:,.0f}", "経常利益": f"{simple['経常利益']:,.0f}",
     })
     brk.append({
         "法人": "内部取引消去", "売上高": f"-{elim_total:,.0f}" if elim_total else "0",
         "粗利益": f"-{elim_total:,.0f}" if elim_total else "0",
-        "販管費": f"-{elim_total:,.0f}" if elim_total else "0", "営業利益": "0",
+        "販管費": f"-{elim_total:,.0f}" if elim_total else "0",
+        "営業利益": "0", "経常利益": "0",
     })
     brk.append({
         "法人": "連結（真水）", "売上高": f"{cons['売上高']:,.0f}",
         "粗利益": f"{cons['粗利益']:,.0f}", "販管費": f"{cons['販管費']:,.0f}",
-        "営業利益": f"{cons['営業利益']:,.0f}",
+        "営業利益": f"{cons['営業利益']:,.0f}", "経常利益": f"{cons['経常利益']:,.0f}",
     })
-    st.dataframe(pd.DataFrame(brk), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(brk), use_container_width=True, hide_index=True,
+                 key="consol_breakdown_table")
+
+
+def render_own_fiscal_view(result: dict, companies: list):
+    """決算期がグループと異なる法人を、自社の決算期でも確認できるようにする。
+
+    連結はエンタ・エスクリエイトの期首（7月）で区切るため、3月決算の
+    ライフワークは自社の期をまたいで割り当てられる。LWの決算書と
+    突き合わせたいときのために、自社の期（4月〜3月）でも表示する。
+    """
+    if not result:
+        return
+    targets = [c for c in companies
+               if c.get("fiscal_year_start", 7) != consolidation.GROUP_FY_START]
+    if not targets:
+        return
+
+    st.divider()
+    st.subheader("🗓 自社決算期ビュー（グループと決算期が異なる法人）")
     st.caption(
-        "内部取引の消去は売上と費用を同額落とすため、営業利益は変わらない。"
-        "変わるのは売上・費用の総額（グループの規模の見え方）。"
+        "上部で選ぶ決算期はグループ基準（7月〜6月）。"
+        "ここでは各社自身の決算期で集計しているため、その会社の決算書と突き合わせられる。"
     )
+
+    tabs = st.tabs([c["name"] for c in targets])
+    for tab, c in zip(tabs, targets):
+        with tab:
+            cid = c["id"]
+            fy = c.get("fiscal_year_start", 7)
+            periods = consolidation.company_by_fiscal_period(result, cid, fy)
+            if not periods:
+                st.info("データがありません。")
+                continue
+
+            color = COMPANY_COLORS.get(cid, "#333")
+            st.markdown(f"**{c['legal_entity']}** — 期首{fy}月（{(fy - 1) or 12}月決算）")
+
+            rows = []
+            for p in periods:
+                t = p["total"]
+                rows.append({
+                    "決算期": p["label"],
+                    "期間": p["range"],
+                    "経過": f"{p['elapsed']}ヶ月" + ("（進行中）" if p["elapsed"] < 12 else ""),
+                    "売上高": f"{t['売上高']:,.0f}",
+                    "粗利益": f"{t['粗利益']:,.0f}",
+                    "販管費": f"{t['販管費']:,.0f}",
+                    "営業利益": f"{t['営業利益']:,.0f}",
+                    "経常利益": f"{t['経常利益']:,.0f}",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                         key=f"ownfy_table_{cid}")
+
+            latest = periods[0]
+            t = latest["total"]
+            st.markdown(f"#### {latest['label']}（{latest['range']}）")
+            if latest["elapsed"] < 12:
+                st.caption(f"※ 進行中です（{latest['elapsed']}ヶ月経過）。通期の数字ではありません。")
+            k1, k2, k3, k4 = st.columns(4)
+            with k1:
+                kpi_card("売上高", t["売上高"], "千円", color=color)
+            with k2:
+                kpi_card("粗利益", t["粗利益"], "千円", color=color)
+            with k3:
+                kpi_card("営業利益", t["営業利益"], "千円",
+                         color="#27ae60" if t["営業利益"] >= 0 else "#c0392b")
+            with k4:
+                kpi_card("経常利益", t["経常利益"], "千円",
+                         color="#27ae60" if t["経常利益"] >= 0 else "#c0392b")
+
+            pl = result["by_company"].get(cid, {})
+            fig = go.Figure()
+            for p in periods[:2][::-1]:
+                fig.add_trace(go.Bar(
+                    x=[f"{int(m[4:])}月" for m in p["months"]],
+                    y=[pl[m]["売上高"] for m in p["months"]],
+                    name=p["label"],
+                    hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f} 千円<extra></extra>",
+                ))
+            fig.update_layout(
+                barmode="group", height=320, yaxis_title="千円",
+                margin=dict(l=10, r=10, t=30, b=10),
+                legend=dict(orientation="h", y=1.12, x=0),
+            )
+            st.markdown("**月次売上の推移（決算期の比較）**")
+            st.plotly_chart(fig, use_container_width=True, key=f"ownfy_chart_{cid}")
+
 
 
 # ============================================================
@@ -1336,16 +1420,50 @@ def main():
         st.warning("月次データが見つかりません。`data/monthly/` にExcelファイルを配置してください。")
         return
 
-    selected_month = st.selectbox(
-        "対象月", available_months,
-        format_func=lambda m: f"{m[:4]}年{int(m[4:])}月"
-    )
+    top_l, top_r = st.columns([1, 2])
+    with top_l:
+        selected_month = st.selectbox(
+            "対象月（データの基準）", available_months,
+            format_func=lambda m: f"{m[:4]}年{int(m[4:])}月"
+        )
+
+    # 連結結果は全セクションで共有する（決算期の区切りもここで決まる）
+    try:
+        consol_result = consolidation.consolidate(selected_month)
+        group_periods = consolidation.group_by_fiscal_period(consol_result)
+    except Exception as e:
+        st.error(f"連結計算に失敗しました: {e}")
+        consol_result, group_periods = None, []
+
+    period = None
+    with top_r:
+        if group_periods:
+            plabels = [f"{p['label']}（{p['range']}）" for p in group_periods]
+            picked = st.radio("決算期", plabels, horizontal=True, key="global_period")
+            period = group_periods[plabels.index(picked)]
+        else:
+            st.info("決算期を判定できる連結データがありません。")
+
+    if period:
+        note = f"表示中: **{period['label']}**（{period['range']}）／ {period['elapsed']}ヶ月"
+        if period["elapsed"] < 12:
+            note += " — **進行中**（通期の数字ではありません）"
+        st.caption(note)
+        st.caption(
+            "決算期の区切りはエンタ・エスクリエイトの期首（7月）に合わせている。"
+            "ライフワークは3月決算のため、下部に自社決算期（4月〜3月）のビューも用意している。"
+        )
+        period_months = period["months"]
+    else:
+        period_months = []
 
     # ====================
     # 1. 3社サマリー
     # ====================
     st.divider()
     st.subheader("📋 3社サマリー")
+    if period:
+        st.caption(f"{period['label']}（{period['range']}）の累計。現金預金のみ直近月末の残高。")
 
     cols = st.columns([1, 1, 1, 1])
     company_data = {}
@@ -1393,20 +1511,33 @@ def main():
             except Exception:
                 pass
 
+            # 決算期ベースの値があればそちらを使う（無ければ各社の期の累計）
+            pt = (period or {}).get("by_company", {}).get(cid)
+            if pt:
+                total_rev = pt["売上高"] * 1000
+                total_gross = pt["粗利益"] * 1000
+                ord_total_sum = pt["経常利益"]
+                gross_rate = (pt["粗利益"] / pt["売上高"] * 100) if pt["売上高"] else 0
+
             sum_rev += total_rev / 1000
             sum_gross += total_gross / 1000
             sum_ord += ord_total_sum
 
-            kpi_card("売上高累計", total_rev / 1000, "千円", color=color)
+            kpi_card("売上高", total_rev / 1000, "千円", color=color)
             st.write("")
-            kpi_card("粗利累計", total_gross / 1000, "千円", color=color)
+            kpi_card("粗利", total_gross / 1000, "千円", color=color)
             st.write("")
-            kpi_card("経常利益累計", ord_total_sum, "千円", color="#27ae60" if ord_total_sum >= 0 else "#c0392b")
+            kpi_card("経常利益", ord_total_sum, "千円", color="#27ae60" if ord_total_sum >= 0 else "#c0392b")
             st.write("")
             kpi_card("粗利率", f"{gross_rate:.1f}%", "", color=color)
 
-            bs_months_kpi, bs_data = extract_bs_trend(bs_df, fy_s)
-            bs_months_kpi, bs_data = _drop_settlement_month(bs_months_kpi, bs_data, fy_s, selected_month)
+            # BSは残高なので、選択中の決算期をカバーするファイルから読む
+            bs_kpi_month = _file_month_for_period(company, period, available_months, selected_month)
+            bs_kpi_path = find_file(company, bs_kpi_month) or fpath
+            bs_kpi_df = read_bs(str(bs_kpi_path), cid) if bs_kpi_path != fpath else bs_df
+            bs_months_kpi, bs_data = extract_bs_trend(bs_kpi_df, fy_s)
+            bs_months_kpi, bs_data = _cap_at_selected(bs_months_kpi, bs_data, fy_s, bs_kpi_month)
+            bs_months_kpi, bs_data = _drop_settlement_month(bs_months_kpi, bs_data, fy_s, bs_kpi_month)
             cash_vals = bs_data.get("現金及び預金合計", [])
             if cash_vals:
                 latest_cash = [v for v in cash_vals if v != 0]
@@ -1440,13 +1571,15 @@ def main():
     # ====================
     # 2. 連結決算（内部取引消去）
     # ====================
-    render_consolidation(selected_month, companies)
+    render_consolidation(consol_result, group_periods, period, companies)
 
     # ====================
     # 3. 単純合算ビュー（PL + CF）
     # ====================
     st.divider()
     st.subheader("🏢 3社合算（内部取引消去なし）")
+    if period:
+        st.caption(f"{period['label']}（{period['range']}）の月次推移。")
 
     # --- 暦月でPL/CFデータを揃える ---
     all_pl = {}
@@ -1496,6 +1629,11 @@ def main():
     for v in list(all_pl.values()) + list(all_cf.values()):
         all_cal_set.update(v["months"])
     calendar_months = sorted(all_cal_set)
+    if period_months:
+        allowed = set(period_months)
+        filtered = [m for m in calendar_months if m.replace("/", "") in allowed]
+        if filtered:
+            calendar_months = filtered
     cal_labels = [f"{int(m.split('/')[1])}月" for m in calendar_months]
 
     # 実績ある月（PL売上ベース）をタブ共通で計算
@@ -2070,6 +2208,8 @@ def main():
     # ====================
     st.divider()
     st.subheader("🏦 BSポジション（貸借対照表）")
+    if period:
+        st.caption(f"{period['label']}（{period['range']}）の推移。")
 
     BS_COLORS = {
         "現金及び預金合計": "#3498db",
@@ -2092,19 +2232,29 @@ def main():
             continue
         cd = company_data[cid]
         fy_start = company.get("fiscal_year_start", 7)
+        bs_month = _file_month_for_period(company, period, available_months, selected_month)
+        bs_path = find_file(company, bs_month) or cd["file"]
         try:
-            bs_raw = read_bs(str(cd["file"]), cid)
+            bs_raw = read_bs(str(bs_path), cid)
             bs_months, bs_data = extract_bs_trend(bs_raw, fy_start)
             if bs_months and bs_data:
-                bs_months, bs_data = _cap_at_selected(bs_months, bs_data, fy_start, selected_month)
+                bs_months, bs_data = _cap_at_selected(bs_months, bs_data, fy_start, bs_month)
                 bs_months, bs_data = _trim_zero_tail(bs_months, bs_data)
-                bs_months, bs_data = _drop_settlement_month(bs_months, bs_data, fy_start, selected_month)
+                bs_months, bs_data = _drop_settlement_month(bs_months, bs_data, fy_start, bs_month)
                 skip = 0
                 if bs_months and "期首" in bs_months[0]:
                     skip = 1
                 month_only = bs_months[skip:]
                 data_only = {k: v[skip:] for k, v in bs_data.items()}
-                cal_months = fiscal_months_to_calendar(month_only, fy_start, selected_month)
+                cal_months = fiscal_months_to_calendar(month_only, fy_start, bs_month)
+                if period_months:
+                    allowed = set(period_months)
+                    keep_i = [i for i, cm in enumerate(cal_months)
+                              if cm.replace("/", "") in allowed]
+                    if keep_i:
+                        cal_months = [cal_months[i] for i in keep_i]
+                        data_only = {k: [v[i] for i in keep_i if i < len(v)]
+                                     for k, v in data_only.items()}
                 all_bs[cid] = {
                     "name": company["name"],
                     "months": cal_months,
@@ -2315,6 +2465,9 @@ def main():
                         _render_bs_detail_expander(key, sorted_cal, consolidated_detail, consolidated, chart_key="group")
         else:
             st.info("BSデータがありません")
+
+
+    render_own_fiscal_view(consol_result, companies)
 
 
 if __name__ == "__main__":
