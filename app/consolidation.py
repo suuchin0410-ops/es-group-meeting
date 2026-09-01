@@ -35,11 +35,16 @@ HISTORY_DIR = APP_DIR.parent / "data" / "history"
 COMPANIES_FILE = CONFIG_DIR / "companies.yaml"
 INTERCOMPANY_FILE = CONFIG_DIR / "intercompany.yaml"
 
-PL_SECTIONS = ("売上高", "売上原価", "粗利益", "販売管理費", "営業利益", "経常利益")
+PL_SECTIONS = ("売上高", "売上原価", "粗利益", "販売管理費",
+               "営業利益", "経常利益", "営業外収益", "営業外費用")
 
 # 連結の「期」の起点。エンタ・エスクリエイトの期首（7月）に合わせる。
 # ライフワークは3月決算のため、LWの数字は自社の期をまたいで暦月で割り当てられる。
 GROUP_FY_START = 7
+
+# 集計対象のPL項目
+PL_KEYS = ("売上高", "売上原価", "粗利益", "販管費", "営業利益",
+           "営業外収益", "営業外費用", "経常利益")
 
 
 # ============================================================
@@ -133,14 +138,21 @@ def monthly_pl(company: dict, file_yyyymm: str) -> dict:
         gross = totals.get("粗利益", [0] * 12)[i]
         sga = totals.get("販売管理費", [0] * 12)[i]
         op = totals.get("営業利益", [0] * 12)[i]
+        noi = totals.get("営業外収益", [0] * 12)[i]
+        noe = totals.get("営業外費用", [0] * 12)[i]
         if rev == 0 and sga == 0 and gross == 0:
             continue  # 未入力の月は連結対象外
+        gross_v = gross if gross else rev - cogs
+        op_v = op if op else gross_v - sga
         out[ym] = {
             "売上高": rev,
             "売上原価": cogs,
-            "粗利益": gross if gross else rev - cogs,
+            "粗利益": gross_v,
             "販管費": sga,
-            "営業利益": op if op else (gross if gross else rev - cogs) - sga,
+            "営業利益": op_v,
+            "営業外収益": noi,
+            "営業外費用": noe,
+            "経常利益": op_v + noi - noe,
         }
     return out
 
@@ -256,12 +268,16 @@ def supplementary_pl(company_id: str) -> dict:
                 v = cells[idx] if idx < len(cells) else None
                 row[key] = (float(v) * scale) if isinstance(v, (int, float)) and not pd.isna(v) else 0.0
             if any(row.get(k) for k in ("売上高", "販管費")):
+                op_v = row.get("営業利益", 0.0)
                 out[ym] = {
                     "売上高": row.get("売上高", 0.0),
                     "売上原価": row.get("売上原価", 0.0),
                     "粗利益": row.get("粗利益", 0.0),
                     "販管費": row.get("販管費", 0.0),
-                    "営業利益": row.get("営業利益", 0.0),
+                    "営業利益": op_v,
+                    "営業外収益": 0.0,
+                    "営業外費用": 0.0,
+                    "経常利益": row.get("経常利益", op_v),
                 }
     return out
 
@@ -338,7 +354,7 @@ def consolidate(file_yyyymm: str, months: list = None) -> dict:
     simple, elim, cons, unknown, coverage = {}, {}, {}, {}, {}
     total_companies = len(by_company)
     for ym in all_months:
-        agg = {"売上高": 0.0, "売上原価": 0.0, "粗利益": 0.0, "販管費": 0.0, "営業利益": 0.0}
+        agg = {k: 0.0 for k in PL_KEYS}
         present = []
         for cid, pl in by_company.items():
             row = pl.get(ym)
@@ -360,13 +376,10 @@ def consolidate(file_yyyymm: str, months: list = None) -> dict:
 
         # 内部売上は、売り手の売上高と買い手の費用（販管費 or 原価）を同額落とす。
         # 利益への影響はゼロ、売上・費用の総額だけが縮む。
-        cons[ym] = {
-            "売上高": agg["売上高"] - e["amount"],
-            "売上原価": agg["売上原価"],
-            "粗利益": agg["粗利益"] - e["amount"],
-            "販管費": agg["販管費"] - e["amount"],
-            "営業利益": agg["営業利益"],
-        }
+        cons[ym] = dict(agg)
+        cons[ym]["売上高"] = agg["売上高"] - e["amount"]
+        cons[ym]["粗利益"] = agg["粗利益"] - e["amount"]
+        cons[ym]["販管費"] = agg["販管費"] - e["amount"]
 
     return {
         "months": all_months,
@@ -381,7 +394,7 @@ def consolidate(file_yyyymm: str, months: list = None) -> dict:
 
 def period_total(d: dict, months: list) -> dict:
     """月次dictを指定期間で合計する。"""
-    out = {"売上高": 0.0, "売上原価": 0.0, "粗利益": 0.0, "販管費": 0.0, "営業利益": 0.0}
+    out = {k: 0.0 for k in PL_KEYS}
     for ym in months:
         row = d.get(ym)
         if not row:

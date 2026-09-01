@@ -618,6 +618,9 @@ def _cap_at_selected(months, data_dict, fy_start, selected_month):
     except (ValueError, TypeError):
         return months, data_dict
     keep = (sel_m - fy_start) % 12 + 1
+    # BS推移は先頭に「期首残」列を持つため、その分だけ枠を広げる
+    if months and "期首" in str(months[0]):
+        keep += 1
     if keep >= len(months):
         return months, data_dict
     return months[:keep], {k: v[:keep] for k, v in data_dict.items()}
@@ -745,7 +748,7 @@ def render_company_pl(fpath, cid, color, company, fy_start=7):
         ))
     fig_profit.add_hline(y=0, line_dash="dash", line_color="#aaa", line_width=1)
     fig_profit.update_layout(height=400, yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
-    st.plotly_chart(fig_profit, use_container_width=True)
+    st.plotly_chart(fig_profit, use_container_width=True, key="chart_fig_profit_747")
 
     # ── なぜその金額か：月別PL構造テーブル ──
     st.markdown("#### 📋 月別PL構造（なぜこの利益か）")
@@ -833,7 +836,7 @@ def render_company_pl(fpath, cid, color, company, fy_start=7):
             textfont=dict(size=11),
         ))
         fig_wf.update_layout(height=400, yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
-        st.plotly_chart(fig_wf, use_container_width=True)
+        st.plotly_chart(fig_wf, use_container_width=True, key="chart_fig_wf_835")
 
     # ── 売上・粗利・販管費の推移グラフ ──
     with st.expander("📈 売上・粗利・販管費の推移"):
@@ -877,7 +880,7 @@ def render_company_pl(fpath, cid, color, company, fy_start=7):
         fig.update_yaxes(title_text="千円", secondary_y=False, **Y_AXIS_FORMAT)
         fig.update_yaxes(title_text="粗利率 (%)", secondary_y=True,
                          gridcolor="rgba(0,0,0,0)", ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="chart_fig_879")
 
     # セグメント別（ある場合）
     segments = company.get("segments", [])
@@ -901,7 +904,7 @@ def render_company_pl(fpath, cid, color, company, fy_start=7):
                         yaxis=dict(title="千円", **Y_AXIS_FORMAT),
                         **CHART_LAYOUT,
                     )
-                    st.plotly_chart(fig_seg, use_container_width=True)
+                    st.plotly_chart(fig_seg, use_container_width=True, key="chart_fig_seg_903")
             except Exception:
                 pass
 
@@ -1071,7 +1074,7 @@ def render_company_cf(fpath, cid, color, fy_start=7):
     st.markdown("##### 🏗️ 期間累計ウォーターフォール")
     st.caption("営業→投資→財務の順に、現金がどう変化したか")
     fig_wf = _make_cf_waterfall(cf_data)
-    st.plotly_chart(fig_wf, use_container_width=True)
+    st.plotly_chart(fig_wf, use_container_width=True, key="chart_fig_wf_1073")
 
     # ── 月別推移（積み上げ棒 + 折れ線） ──
     st.markdown("##### 📊 月別CF推移")
@@ -1096,7 +1099,7 @@ def render_company_cf(fpath, cid, color, fy_start=7):
     fig_m.update_layout(barmode="relative", height=450,
                         yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
     fig_m.add_hline(y=0, line_color="#999", line_width=1)
-    st.plotly_chart(fig_m, use_container_width=True)
+    st.plotly_chart(fig_m, use_container_width=True, key="chart_fig_m_1098")
 
     # ── 月別CFテーブル ──
     with st.expander("📝 月別CF内訳テーブル"):
@@ -1271,7 +1274,7 @@ def render_consolidation(selected_month: str, companies: list):
         barmode="group", height=320, margin=dict(l=10, r=10, t=30, b=10),
         yaxis_title="千円", legend=dict(orientation="h", y=1.12, x=0),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="chart_fig_1273")
 
     # --- 法人別の内訳 ---
     st.markdown(f"**法人別の内訳（{p['label']} 合計）**")
@@ -1620,7 +1623,7 @@ def main():
                 fig_op.update_yaxes(title_text="千円（月次）", secondary_y=False, **Y_AXIS_FORMAT)
                 fig_op.update_yaxes(title_text="千円（累積）", secondary_y=True, gridcolor="rgba(0,0,0,0)", tickformat=",")
                 _align_zero_axes(fig_op, op_by_co, op_cum, n_months)
-                st.plotly_chart(fig_op, use_container_width=True)
+                st.plotly_chart(fig_op, use_container_width=True, key="chart_fig_op_1622")
 
                 # ── 経常利益：会社別積み上げ + 合計ライン + 累積ライン ──
                 if any(v != 0 for v in ord_line):
@@ -1660,7 +1663,7 @@ def main():
                     fig_ord.update_yaxes(title_text="千円（月次）", secondary_y=False, **Y_AXIS_FORMAT)
                     fig_ord.update_yaxes(title_text="千円（累積）", secondary_y=True, gridcolor="rgba(0,0,0,0)", tickformat=",")
                     _align_zero_axes(fig_ord, ord_by_co, ord_cum, n_months)
-                    st.plotly_chart(fig_ord, use_container_width=True)
+                    st.plotly_chart(fig_ord, use_container_width=True, key="chart_fig_ord_1662")
 
                 # ── 月次キャッシュフロー：会社別積み上げ + 合計ライン + 累積ライン ──
                 if all_cf:
@@ -1712,7 +1715,7 @@ def main():
                         fig_cf.update_yaxes(title_text="千円（月次）", secondary_y=False, **Y_AXIS_FORMAT)
                         fig_cf.update_yaxes(title_text="千円（累積）", secondary_y=True, gridcolor="rgba(0,0,0,0)", tickformat=",")
                         _align_zero_axes(fig_cf, cf_by_co, cf_cum, n_months)
-                        st.plotly_chart(fig_cf, use_container_width=True)
+                        st.plotly_chart(fig_cf, use_container_width=True, key="chart_fig_cf_1714")
 
                 # 売上・粗利・販管費の推移グラフ
                 with st.expander("📈 売上・粗利・販管費の推移"):
@@ -1748,7 +1751,7 @@ def main():
                     fig_pl.update_yaxes(title_text="千円（月次）", secondary_y=False, **Y_AXIS_FORMAT)
                     fig_pl.update_yaxes(title_text="千円（累計）", secondary_y=True,
                                         gridcolor="rgba(0,0,0,0)", tickformat=",")
-                    st.plotly_chart(fig_pl, use_container_width=True)
+                    st.plotly_chart(fig_pl, use_container_width=True, key="chart_fig_pl_1750")
 
                 # 連結PLサマリーテーブル
                 pl_rows = []
@@ -1803,7 +1806,7 @@ def main():
                     title=dict(text="売上高 法人別比較", font=dict(size=15)),
                     **CHART_LAYOUT,
                 )
-                st.plotly_chart(fig_rev, use_container_width=True)
+                st.plotly_chart(fig_rev, use_container_width=True, key="chart_fig_rev_1805")
 
                 fig_op = go.Figure()
                 for cid_c, info in all_pl.items():
@@ -1836,7 +1839,7 @@ def main():
                     title=dict(text="営業利益 法人別比較", font=dict(size=15)),
                     **CHART_LAYOUT,
                 )
-                st.plotly_chart(fig_op, use_container_width=True)
+                st.plotly_chart(fig_op, use_container_width=True, key="chart_fig_op_1838")
         else:
             st.info("PLデータがありません")
 
@@ -1890,7 +1893,7 @@ def main():
                 st.markdown("##### 🏗️ 3社合算：期間累計ウォーターフォール")
                 st.caption("営業→投資→財務の順に、現金がどう変化したか")
                 fig_wf = _make_cf_waterfall(agg_cf)
-                st.plotly_chart(fig_wf, use_container_width=True)
+                st.plotly_chart(fig_wf, use_container_width=True, key="chart_fig_wf_1892")
 
                 # 月別推移（積み上げ棒）
                 st.markdown("##### 📊 3社合算：月別CF推移")
@@ -1913,7 +1916,7 @@ def main():
                 fig_m.update_layout(barmode="relative", height=450,
                                     yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
                 fig_m.add_hline(y=0, line_color="#999", line_width=1)
-                st.plotly_chart(fig_m, use_container_width=True)
+                st.plotly_chart(fig_m, use_container_width=True, key="chart_fig_m_1915")
 
                 # サマリーテーブル（表示月に絞った集計）
                 cf_by_co_all = {}
@@ -1979,7 +1982,7 @@ def main():
                     margin=dict(l=160, r=80, t=40, b=40),
                 )
                 fig_cf_bar.add_vline(x=0, line_color="#999", line_width=1)
-                st.plotly_chart(fig_cf_bar, use_container_width=True)
+                st.plotly_chart(fig_cf_bar, use_container_width=True, key="chart_fig_cf_bar_1981")
 
                 # 期間合計の比較（横棒）
                 st.markdown("##### 💰 法人別：期間キャッシュフロー合計")
@@ -2005,7 +2008,7 @@ def main():
                     hoverlabel=dict(font_size=13),
                 )
                 fig_total.add_vline(x=0, line_color="#999", line_width=1)
-                st.plotly_chart(fig_total, use_container_width=True)
+                st.plotly_chart(fig_total, use_container_width=True, key="chart_fig_total_2007")
 
                 # 法人別月次CF比較
                 st.markdown("##### 📊 法人別：月別CF推移")
@@ -2028,7 +2031,7 @@ def main():
                 fig_comp.update_layout(barmode="group", height=420,
                                        yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
                 fig_comp.add_hline(y=0, line_color="#999", line_width=1)
-                st.plotly_chart(fig_comp, use_container_width=True)
+                st.plotly_chart(fig_comp, use_container_width=True, key="chart_fig_comp_2030")
 
                 # 法人別累計推移
                 st.markdown("##### 📈 法人別：CF累計推移")
@@ -2058,7 +2061,7 @@ def main():
                 fig_cum.update_layout(height=400,
                                       yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
                 fig_cum.add_hline(y=0, line_color="#999", line_width=1)
-                st.plotly_chart(fig_cum, use_container_width=True)
+                st.plotly_chart(fig_cum, use_container_width=True, key="chart_fig_cum_2060")
         else:
             st.info("CFデータがありません")
 
@@ -2128,7 +2131,7 @@ def main():
         "#f1c40f", "#2ecc71", "#e84393", "#00cec9", "#636e72",
     ]
 
-    def _render_bs_chart(months, data, height=480):
+    def _render_bs_chart(months, data, height=480, chart_key=""):
         fig = go.Figure()
         hover_bs = "<b>%{x}</b><br>%{fullData.name}: %{y:,.0f} 千円<extra></extra>"
         for key, vals in data.items():
@@ -2141,9 +2144,9 @@ def main():
                 hovertemplate=hover_bs,
             ))
         fig.update_layout(height=height, yaxis=dict(title="千円", **Y_AXIS_FORMAT), **CHART_LAYOUT)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"bschart_{chart_key}")
 
-    def _render_bs_table(data):
+    def _render_bs_table(data, chart_key=""):
         bs_rows = []
         for key, vals in data.items():
             nonzero = [v for v in vals if v != 0]
@@ -2156,9 +2159,10 @@ def main():
                 "直近月": f"{latest:,.0f}",
                 "増減": f"{diff:+,.0f}",
             })
-        st.dataframe(pd.DataFrame(bs_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(bs_rows), use_container_width=True, hide_index=True,
+                     key=f"bstable_{chart_key}")
 
-    def _render_bs_detail_expander(parent_key, months, detail_data, parent_data=None):
+    def _render_bs_detail_expander(parent_key, months, detail_data, parent_data=None, chart_key=""):
         """親項目の内訳をexpanderで表示する。"""
         if parent_key not in BS_DETAIL_MAP:
             return
@@ -2205,9 +2209,10 @@ def main():
                     legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center", font=dict(size=11)),
                     margin=dict(l=60, r=30, t=20, b=70),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"bsdetail_{chart_key}_{parent_key}")
             if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                             key=f"bsdetailtbl_{chart_key}_{parent_key}")
 
     for idx, company in enumerate(companies):
         cid = company["id"]
@@ -2225,13 +2230,13 @@ def main():
                         with kpi_cols[i]:
                             kpi_card(BS_LABELS[key], val, "千円", color=c)
 
-                _render_bs_chart(bs_info["months"], bs_info["data"])
-                _render_bs_table(bs_info["data"])
+                _render_bs_chart(bs_info["months"], bs_info["data"], chart_key=cid)
+                _render_bs_table(bs_info["data"], chart_key=cid)
 
                 if detail:
                     st.markdown("##### 🔍 項目別内訳（クリックで展開）")
                     for key in ["現金及び預金合計", "流動資産合計", "流動負債合計", "純資産の部合計"]:
-                        _render_bs_detail_expander(key, bs_info["months"], detail, bs_info["data"])
+                        _render_bs_detail_expander(key, bs_info["months"], detail, bs_info["data"], chart_key=cid)
             else:
                 st.info("BSデータがありません")
 
@@ -2265,7 +2270,7 @@ def main():
                 with kpi_cols[i]:
                     kpi_card(f"3社{BS_LABELS[key]}", val, "千円", color=c)
 
-            _render_bs_chart(sorted_cal, consolidated)
+            _render_bs_chart(sorted_cal, consolidated, chart_key="group")
 
             st.markdown("##### 法人別内訳（直近月）")
             for key in bs_keys:
@@ -2282,7 +2287,7 @@ def main():
                         c = "#27ae60" if val >= 0 else "#c0392b"
                         st.metric(info["name"], f"{val:,.0f}", label_visibility="visible")
 
-            _render_bs_table(consolidated)
+            _render_bs_table(consolidated, chart_key="group")
 
             # 3社合算の内訳expander
             all_detail_keys = set()
@@ -2307,7 +2312,7 @@ def main():
                 if consolidated_detail:
                     st.markdown("##### 🔍 項目別内訳（クリックで展開）")
                     for key in bs_keys:
-                        _render_bs_detail_expander(key, sorted_cal, consolidated_detail, consolidated)
+                        _render_bs_detail_expander(key, sorted_cal, consolidated_detail, consolidated, chart_key="group")
         else:
             st.info("BSデータがありません")
 
